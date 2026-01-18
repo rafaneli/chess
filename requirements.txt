@@ -1,5 +1,3 @@
 streamlit>=1.30.0
 python-chess
-st-chess
-requests
 pandas
