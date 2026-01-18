@@ -2,20 +2,21 @@ import streamlit as st
 import chess
 import chess.engine
 import os
+import shutil
 
 # --- CONFIGURAÇÕES DO MOTOR ---
 # Certifique-se de que o binário do Stockfish esteja na mesma pasta ou forneça o caminho
-STOCKFISH_PATHS = [
-    "stockfish",  # Para deploy no Streamlit Cloud (instalado via apt)
-    os.path.join("stockfish", "stockfish"),  # Para local
-    os.path.join("stockfish", "stockfish.exe"),  # Para Windows local
-]
-
-STOCKFISH_PATH = None
-for path in STOCKFISH_PATHS:
-    if os.path.exists(path):
-        STOCKFISH_PATH = path
-        break
+STOCKFISH_PATH = shutil.which("stockfish")  # Verifica se está no PATH (cloud)
+if not STOCKFISH_PATH:
+    # Fallback para caminhos locais
+    STOCKFISH_PATHS = [
+        os.path.join("stockfish", "stockfish"),  # Para local
+        os.path.join("stockfish", "stockfish.exe"),  # Para Windows local
+    ]
+    for path in STOCKFISH_PATHS:
+        if os.path.exists(path):
+            STOCKFISH_PATH = path
+            break
 
 class ChessTutor:
     def __init__(self):
@@ -100,5 +101,4 @@ with col2:
 # Rodapé técnico
 st.sidebar.header("Configurações")
 if st.sidebar.button("Reiniciar Partida"):
-    st.session_state.board = chess.Board()
-    st.rerun()
+    st.session
