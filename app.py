@@ -47,7 +47,7 @@ def get_engine():
 if 'user' not in st.session_state:
     st.title("♟️ Bem-vindo ao Chess Pro")
     
-    # Criação das abas para garantir que o cadastro esteja disponível
+    # Abas para garantir que o cadastro esteja sempre visível
     tab_login, tab_cadastro = st.tabs(["🔐 Entrar", "📝 Criar Conta"])
     
     with tab_login:
@@ -75,33 +75,40 @@ if 'user' not in st.session_state:
                                  (nu, hashlib.sha256(np.encode()).hexdigest()))
                     conn.commit()
                     conn.close()
-                    st.success("Conta criada com sucesso! Vá para a aba 'Entrar'.")
+                    st.success("Conta criada! Agora faça o login na aba 'Entrar'.")
                 except:
                     st.error("Este nome de usuário já está em uso.")
             else:
                 st.warning("Preencha todos os campos.")
-    st.stop() # Interrompe a execução até que o usuário esteja logado
+    st.stop()
 
 # --- 5. INTERFACE DO USUÁRIO LOGADO ---
 st.sidebar.title(f"👤 {st.session_state.user} ({st.session_state.rating})")
 menu = st.sidebar.selectbox("Navegação", ["Jogar Partida", "Aprendizado", "Histórico & Análise"])
 
-def render_board(board):
-    board_svg = chess.svg.board(board=board, size=450).encode("utf-8")
+def render_board(board, flipped=False):
+    # flipped=True inverte o tabuleiro para jogar de pretas
+    board_svg = chess.svg.board(board=board, size=450, orientation=chess.BLACK if flipped else chess.WHITE).encode("utf-8")
     b64 = base64.b64encode(board_svg).decode("utf-8")
     return f'<div style="display:flex;justify-content:center;"><img src="data:image/svg+xml;base64,{b64}" style="width:100%;max-width:450px;border-radius:5px;"/></div>'
 
 # --- ABA: JOGAR ---
 if menu == "Jogar Partida":
     st.header("🎮 Partida Local Interativa")
-    if 'game_board' not in st.session_state: st.session_state.game_board = chess.Board()
+    
+    # Configurações de Cor e Oponente
+    if 'game_board' not in st.session_state: 
+        st.session_state.game_board = chess.Board()
     
     col_b, col_c = st.columns([2, 1])
-    with col_b:
-        st.markdown(render_board(st.session_state.game_board), unsafe_allow_html=True)
     
     with col_c:
-        st.write("### Suas Jogadas")
+        st.write("### ⚙️ Configurações")
+        cor_escolhida = st.radio("Jogar de:", ["Brancas", "Pretas"], horizontal=True)
+        op_nome = st.text_input("Nome do Oponente", value="Computador")
+        
+        st.divider()
+        st.write("### ♟️ Suas Jogadas")
         move = st.text_input("Digite o lance (ex: e4, Nf3, O-O)", key="play_move")
         if st.button("Executar Lance"):
             try:
@@ -115,17 +122,27 @@ if menu == "Jogar Partida":
             st.rerun()
 
         st.divider()
-        op = st.text_input("Nome do Oponente")
         if st.button("Salvar Partida e Ganhar Rating"):
             pgn = str(chess.pgn.Game.from_board(st.session_state.game_board))
             conn = sqlite3.connect('chess_master.db')
+            
+            # Define quem jogou de quê com base na escolha da cor
+            branco = st.session_state.user if cor_escolhida == "Brancas" else op_nome
+            preto = op_nome if cor_escolhida == "Brancas" else st.session_state.user
+            
             conn.execute('INSERT INTO games (white, black, pgn, result) VALUES (?,?,?,?)', 
-                         (st.session_state.user, op, pgn, "Finalizado"))
+                         (branco, preto, pgn, "Finalizado"))
             conn.execute('UPDATE users SET rating = rating + 15 WHERE username=?', (st.session_state.user,))
             conn.commit()
             conn.close()
             st.session_state.rating += 15
             st.success("Vitória registrada! +15 de Rating.")
+
+    with col_b:
+        # Renderiza o tabuleiro invertido se o jogador escolher Pretas
+        is_flipped = True if cor_escolhida == "Pretas" else False
+        st.markdown(render_board(st.session_state.game_board, flipped=is_flipped), unsafe_allow_html=True)
+        st.write(f"Vez das: **{'Brancas' if st.session_state.game_board.turn else 'Pretas'}**")
 
 # --- ABA: APRENDIZADO ---
 elif menu == "Aprendizado":
@@ -147,15 +164,15 @@ elif menu == "Aprendizado":
         if st.button("Analisar com Stockfish"):
             engine = get_engine()
             if engine:
-                with st.spinner("Calculando melhor lance..."):
+                with st.spinner("IA calculando..."):
                     res = engine.analyse(board_edu, chess.engine.Limit(time=1.0))
                     best = board_edu.san(res["pv"][0])
-                    st.success(f"O melhor lance sugerido é: **{best}**")
+                    st.success(f"O melhor lance é: **{best}**")
                     engine.quit()
             else:
-                st.error("Motor Stockfish indisponível no servidor.")
+                st.error("Motor Stockfish indisponível.")
 
 # --- LOGOUT ---
 if st.sidebar.button("Sair da Conta"):
-    del st.session_state.user
+    st.session_state.clear()
     st.rerun()
