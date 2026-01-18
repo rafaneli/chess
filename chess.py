@@ -5,7 +5,17 @@ import os
 
 # --- CONFIGURAÇÕES DO MOTOR ---
 # Certifique-se de que o binário do Stockfish esteja na mesma pasta ou forneça o caminho
-STOCKFISH_PATH = "stockfish" # No Windows use "stockfish.exe"
+STOCKFISH_PATHS = [
+    "stockfish",  # Para deploy no Streamlit Cloud (instalado via apt)
+    os.path.join("stockfish", "stockfish"),  # Para local
+    os.path.join("stockfish", "stockfish.exe"),  # Para Windows local
+]
+
+STOCKFISH_PATH = None
+for path in STOCKFISH_PATHS:
+    if os.path.exists(path):
+        STOCKFISH_PATH = path
+        break
 
 class ChessTutor:
     def __init__(self):
