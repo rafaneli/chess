@@ -1,8 +1,10 @@
 import streamlit as st
 import chess
 import chess.engine
+import chess.pgn
 import os
 import shutil
+from io import StringIO
 
 # --- CONFIGURAÇÕES DO MOTOR ---
 # Certifique-se de que o binário do Stockfish esteja na mesma pasta ou forneça o caminho
@@ -45,60 +47,130 @@ class ChessTutor:
 # --- INTERFACE STREAMLIT ---
 st.set_page_config(page_title="Professor de Xadrez IA", layout="wide")
 
+# Inicializar estado da sessão
 if 'board' not in st.session_state:
     st.session_state.board = chess.Board()
 if 'history' not in st.session_state:
     st.session_state.history = []
+if 'pgn_game' not in st.session_state:
+    st.session_state.pgn_game = None
+if 'current_move' not in st.session_state:
+    st.session_state.current_move = 0
 
 tutor = ChessTutor()
 
-st.title("♟️ Professor de Xadrez Robotizado")
-st.markdown("Analise seus lances com a precisão do **Stockfish**.")
+st.title("♟️ Professor de Xadrez IA")
+st.markdown("Jogue e analise partidas com a precisão do **Stockfish**.")
 
-col1, col2 = st.columns([2, 1])
+# Abas para diferentes modos
+tab1, tab2 = st.tabs(["Jogar", "Analisar PGN"])
 
-with col1:
-    st.subheader("Tabuleiro Atual")
-    st.code(str(st.session_state.board))
-    
-    move_input = st.text_input("Digite seu lance (ex: e2e4)", key="move_input")
-    if st.button("Fazer Lance"):
-        if move_input:
-            try:
-                move = chess.Move.from_uci(move_input)
-                if move in st.session_state.board.legal_moves:
-                    st.session_state.board.push(move)
-                    st.rerun()
-                else:
-                    st.error("Lance ilegal!")
-            except:
-                st.error("Lance inválido!")
-    
-    # Se o jogador fizer um lance no tabuleiro (neste caso, via botão)
-    # Lógica de análise aqui, mas por enquanto, apenas atualizar
+with tab1:
+    st.header("Modo de Jogo")
+    col1, col2 = st.columns([2, 1])
 
-with col2:
-    st.subheader("📊 Revisão da Partida")
-    
-    # Simulação de Precisão (Exemplo didático)
-    score = tutor.get_analysis(st.session_state.board)
-    
-    if score is not None:
-        precision = max(0, min(100, 100 - (abs(score) / 20))) # Fórmula simplificada
-        st.metric("Precisão Geral", f"{precision:.1f}%")
+    with col1:
+        st.subheader("Tabuleiro")
+        # Exibir tabuleiro visual
+        board_svg = st.session_state.board._repr_svg_()
+        st.markdown(board_svg, unsafe_allow_html=True)
         
-        # Classificação do lance atual
-        label, color = tutor.classify_move(score)
-        st.markdown(f"### Avaliação: <span style='color:{color}'>{label}</span>", unsafe_allow_html=True)
+        st.subheader("Fazer Lance")
+        move_input = st.text_input("Digite seu lance (ex: e2e4)", key="move_input")
+        if st.button("Fazer Lance"):
+            if move_input:
+                try:
+                    move = chess.Move.from_uci(move_input)
+                    if move in st.session_state.board.legal_moves:
+                        st.session_state.board.push(move)
+                        st.session_state.history.append(move)
+                        st.rerun()
+                    else:
+                        st.error("Lance ilegal!")
+                except:
+                    st.error("Lance inválido!")
         
-        st.divider()
-        st.write("**Dica do Professor:**")
-        if abs(score) > 100:
-            st.info("Você está perdendo material ou posição. Tente controlar o centro!")
+        # Opção para desfazer lance
+        if st.button("Desfazer Lance") and st.session_state.history:
+            st.session_state.board.pop()
+            st.session_state.history.pop()
+            st.rerun()
+
+    with col2:
+        st.subheader("Análise")
+        score = tutor.get_analysis(st.session_state.board)
+        if score is not None:
+            precision = max(0, min(100, 100 - (abs(score) / 20)))
+            st.metric("Avaliação do Stockfish", f"{score/100:.2f}")
+            st.metric("Precisão Estimada", f"{precision:.1f}%")
+            
+            label, color = tutor.classify_move(score)
+            st.markdown(f"**Classificação:** <span style='color:{color}'>{label}</span>", unsafe_allow_html=True)
         else:
-            st.success("Sua posição é sólida. Continue pressionando!")
+            st.warning("Stockfish não disponível.")
 
-# Rodapé técnico
+        st.subheader("Lances Legais")
+        legal_moves = list(st.session_state.board.legal_moves)
+        if legal_moves:
+            selected_move = st.selectbox("Escolha um lance legal:", [str(move) for move in legal_moves])
+            if st.button("Fazer Lance Selecionado"):
+                move = chess.Move.from_uci(selected_move)
+                st.session_state.board.push(move)
+                st.session_state.history.append(move)
+                st.rerun()
+
+with tab2:
+    st.header("Análise de PGN")
+    uploaded_file = st.file_uploader("Faça upload de um arquivo PGN", type="pgn")
+    
+    if uploaded_file is not None:
+        pgn_content = StringIO(uploaded_file.getvalue().decode("utf-8"))
+        game = chess.pgn.read_game(pgn_content)
+        
+        if game is not None:
+            st.session_state.pgn_game = game
+            st.session_state.current_move = 0
+            st.session_state.board = game.board()
+            
+            st.subheader("Informações da Partida")
+            st.write(f"**Brancas:** {game.headers.get('White', 'Desconhecido')}")
+            st.write(f"**Pretas:** {game.headers.get('Black', 'Desconhecido')}")
+            st.write(f"**Resultado:** {game.headers.get('Result', 'Desconhecido')}")
+            
+            # Navegação pela partida
+            moves = list(game.mainline_moves())
+            st.session_state.current_move = st.slider("Mover na partida", 0, len(moves), st.session_state.current_move)
+            
+            # Aplicar moves até o ponto atual
+            board = game.board()
+            for i, move in enumerate(moves[:st.session_state.current_move]):
+                board.push(move)
+            
+            st.session_state.board = board
+            
+            # Exibir tabuleiro
+            board_svg = board._repr_svg_()
+            st.markdown(board_svg, unsafe_allow_html=True)
+            
+            # Análise da posição atual
+            score = tutor.get_analysis(board)
+            if score is not None:
+                st.metric("Avaliação", f"{score/100:.2f}")
+                label, color = tutor.classify_move(score)
+                st.markdown(f"**Posição:** <span style='color:{color}'>{label}</span>", unsafe_allow_html=True)
+            
+            # Mostrar próximos lances
+            if st.session_state.current_move < len(moves):
+                next_move = moves[st.session_state.current_move]
+                st.write(f"Próximo lance: {next_move}")
+        else:
+            st.error("Erro ao ler o arquivo PGN.")
+
+# Rodapé
 st.sidebar.header("Configurações")
 if st.sidebar.button("Reiniciar Partida"):
-    st.session
+    st.session_state.board = chess.Board()
+    st.session_state.history = []
+    st.session_state.pgn_game = None
+    st.session_state.current_move = 0
+    st.rerun()
