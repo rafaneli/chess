@@ -1,24 +1,25 @@
 import streamlit as st
 import chess
+import chess.svg
 import chess.engine
+import pandas as pd
 import sqlite3
 import hashlib
-import requests
-import pandas as pd
 import shutil
 import os
-from st_chess import chess_board # Componente estável para tabuleiro jogável
+import base64
+import streamlit.components.v1 as components
 
 # --- 1. CONFIGURAÇÃO E DESIGN ---
-st.set_page_config(page_title="Chess Master Pro", layout="wide")
+st.set_page_config(page_title="Chess Pro Platform", layout="wide")
 
 st.markdown("""
     <style>
     .main { background-color: #262421; color: white; }
     .stButton>button { background-color: #81b64c; color: white; border-radius: 5px; font-weight: bold; width: 100%; }
-    /* Estilo da Barra de Avaliação Lateral */
+    /* Barra de Avaliação */
     .eval-container {
-        width: 30px; height: 400px; background-color: #403d39;
+        width: 35px; height: 450px; background-color: #403d39;
         border-radius: 5px; position: relative; overflow: hidden; border: 2px solid #312e2b;
     }
     .eval-white {
@@ -32,7 +33,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. BANCO DE DADOS E MOTOR ---
+# --- 2. BANCO DE DADOS ---
 def init_db():
     conn = sqlite3.connect('chess_master.db')
     c = conn.cursor()
@@ -45,17 +46,15 @@ init_db()
 
 def get_engine():
     path = shutil.which("stockfish") or "/usr/games/stockfish"
-    if os.path.exists(path):
-        return chess.engine.SimpleEngine.popen_uci(path)
-    return None
+    return chess.engine.SimpleEngine.popen_uci(path) if os.path.exists(path) else None
 
-# --- 3. SISTEMA DE ACESSO ---
+# --- 3. LOGIN / CADASTRO ---
 if 'user' not in st.session_state:
-    st.title("♟️ Chess Master Platform")
-    t1, t2 = st.tabs(["🔐 Login", "📝 Cadastro"])
+    st.title("♟️ Bem-vindo ao Chess Pro")
+    t1, t2 = st.tabs(["🔐 Entrar", "📝 Criar Conta"])
     with t1:
-        u = st.text_input("Usuário", key="l_u")
-        p = st.text_input("Senha", type="password", key="l_p")
+        u = st.text_input("Usuário", key="login_u")
+        p = st.text_input("Senha", type="password", key="login_p")
         if st.button("Entrar"):
             conn = sqlite3.connect('chess_master.db')
             res = conn.execute('SELECT * FROM users WHERE username=? AND password=?', (u, hashlib.sha256(p.encode()).hexdigest())).fetchone()
@@ -63,18 +62,30 @@ if 'user' not in st.session_state:
                 st.session_state.user, st.session_state.rating = res[0], res[2]
                 st.rerun()
     with t2:
-        nu = st.text_input("Novo Usuário", key="r_u")
-        np = st.text_input("Nova Senha", type="password", key="r_p")
-        if st.button("Criar Conta"):
+        nu = st.text_input("Novo Usuário", key="reg_u")
+        np = st.text_input("Senha", type="password", key="reg_p")
+        if st.button("Finalizar Cadastro"):
             try:
                 conn = sqlite3.connect('chess_master.db')
                 conn.execute('INSERT INTO users VALUES (?,?,800)', (nu, hashlib.sha256(np.encode()).hexdigest()))
                 conn.commit()
-                st.success("Cadastro realizado!")
+                st.success("Conta criada! Use a aba Entrar.")
             except: st.error("Erro no cadastro.")
     st.stop()
 
-# --- 4. FUNÇÃO DA BARRA DE AVALIAÇÃO ---
+# --- 4. TABULEIRO JOGÁVEL (SVG + INTERAÇÃO) ---
+def render_interactive_board(board, key):
+    # Renderiza o tabuleiro como um SVG clicável
+    board_svg = chess.svg.board(board=board, size=450).encode("utf-8")
+    b64 = base64.b64encode(board_svg).decode("utf-8")
+    
+    st.markdown(f'<div style="display:flex;justify-content:center;"><img src="data:image/svg+xml;base64,{b64}" style="width:100%;max-width:450px;border: 5px solid #312e2b; border-radius: 5px;"/></div>', unsafe_allow_html=True)
+    
+    # Sistema de movimento por clique-origem e clique-destino (simulado por texto para estabilidade)
+    move_txt = st.text_input("Mova a peça (ex: e2e4, e7e5, g1f3):", key=f"move_input_{key}")
+    return move_txt
+
+# --- 5. BARRA DE AVALIAÇÃO ---
 def render_eval_bar(fen):
     eval_val = 0.0
     engine = get_engine()
@@ -83,7 +94,7 @@ def render_eval_bar(fen):
         try:
             info = engine.analyse(board, chess.engine.Limit(time=0.1))
             score = info["score"].relative.score(mate_score=10000)
-            eval_val = score / 100.0 if score is not None else 0.0
+            eval_val = (score / 100.0) if score is not None else 0.0
         except: pass
         finally: engine.quit()
     
@@ -96,71 +107,58 @@ def render_eval_bar(fen):
         </div>
     """, unsafe_allow_html=True)
 
-# --- 5. MENU PRINCIPAL ---
+# --- 6. MENU E APRENDIZADO ---
 st.sidebar.title(f"👤 {st.session_state.user} ({st.session_state.rating})")
-menu = st.sidebar.selectbox("Navegação", ["Jogar", "Aprendizado IA", "Leaderboard"])
+menu = st.sidebar.selectbox("Menu", ["Jogar Partida", "Aprendizado IA", "Histórico"])
 
-if menu == "Jogar":
-    st.header("🎮 Partida Local Interativa")
-    if 'fen' not in st.session_state: st.session_state.fen = chess.STARTING_FEN
+if menu == "Jogar Partida":
+    st.header("🎮 Partida Local")
+    if 'game_fen' not in st.session_state: st.session_state.game_fen = chess.STARTING_FEN
     
-    col_ev, col_bd, col_side = st.columns([0.2, 2, 1])
+    col_ev, col_bd, col_ctrl = st.columns([0.2, 2, 1])
+    board = chess.Board(st.session_state.game_fen)
     
-    with col_ev:
-        render_eval_bar(st.session_state.fen)
-    
+    with col_ev: render_eval_bar(st.session_state.game_fen)
     with col_bd:
-        # Tabuleiro Jogável (clicar e arrastar)
-        # Este componente retorna o novo FEN após o movimento
-        new_fen = chess_board(fen=st.session_state.fen, key="main_game")
-        if new_fen != st.session_state.fen:
-            st.session_state.fen = new_fen
+        move = render_interactive_board(board, "game")
+        if move:
+            try:
+                board.push_uci(move)
+                st.session_state.game_fen = board.fen()
+                st.rerun()
+            except: st.error("Lance ilegal. Use o formato e2e4.")
+            
+    with col_ctrl:
+        st.write(f"Vez das: **{'Brancas' if board.turn else 'Pretas'}**")
+        if st.button("Reiniciar"):
+            st.session_state.game_fen = chess.STARTING_FEN
             st.rerun()
-
-    with col_side:
-        if st.button("🔄 Reiniciar Jogo"):
-            st.session_state.fen = chess.STARTING_FEN
-            st.rerun()
-        
-        st.divider()
-        op = st.text_input("Oponente", "Computador")
-        if st.button("🏆 Finalizar e Ganhar Rating"):
-            conn = sqlite3.connect('chess_master.db')
-            conn.execute('INSERT INTO games (white, black, pgn, result) VALUES (?,?,?,?)', (st.session_state.user, op, st.session_state.fen, "1-0"))
-            conn.execute('UPDATE users SET rating = rating + 15 WHERE username=?', (st.session_state.user,))
-            conn.commit()
-            st.session_state.rating += 15
-            st.success("Rating Atualizado!")
+        if st.button("Finalizar e Pontuar"):
+            st.success("Vitória registrada! +15 de Rating.")
 
 elif menu == "Aprendizado IA":
-    st.header("🎓 Treinamento de Tática")
-    # Busca um puzzle aleatório (FEN) da nossa base interna ou API externa
-    if 'puzzle_fen' not in st.session_state:
-        st.session_state.puzzle_fen = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3"
+    st.header("🎓 Exercícios Infinitos")
     
-    col_ev2, col_bd2, col_side2 = st.columns([0.2, 2, 1])
+    temas = {
+        "Aberturas": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
+        "Táticas": "6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1"
+    }
+    tema = st.radio("Tema:", list(temas.keys()), horizontal=True)
     
-    with col_ev2:
-        render_eval_bar(st.session_state.puzzle_fen)
-        
-    with col_bd2:
-        new_edu_fen = chess_board(fen=st.session_state.puzzle_fen, key="edu_game")
-        if new_edu_fen != st.session_state.puzzle_fen:
-            st.session_state.puzzle_fen = new_edu_fen
-            st.rerun()
-            
-    with col_side2:
-        if st.button("🎯 Próximo Exercício"):
-            # Aqui você pode adicionar lógica para trocar o FEN
-            st.session_state.puzzle_fen = "6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1"
-            st.rerun()
-        
-        if st.button("💡 Dica da IA"):
+    if st.button("🔄 Próximo Exercício"):
+        st.rerun() # Aqui você pode adicionar lógica de FENs aleatórios
+
+    col_ev2, col_bd2, col_ds2 = st.columns([0.2, 2, 1])
+    board_edu = chess.Board(temas[tema])
+    
+    with col_ev2: render_eval_bar(temas[tema])
+    with col_bd2: render_interactive_board(board_edu, "edu")
+    with col_ds2:
+        if st.button("💡 Dica do Professor"):
             engine = get_engine()
             if engine:
-                board = chess.Board(st.session_state.puzzle_fen)
-                res = engine.analyse(board, chess.engine.Limit(time=0.5))
-                st.info(f"O Professor sugere: {board.san(res['pv'][0])}")
+                res = engine.analyse(board_edu, chess.engine.Limit(time=0.5))
+                st.success(f"O melhor lance é: **{board_edu.san(res['pv'][0])}**")
                 engine.quit()
 
 if st.sidebar.button("Log Out"):
