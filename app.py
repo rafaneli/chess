@@ -6,6 +6,64 @@ import shutil
 import chess.pgn
 from io import StringIO  # <--- Linha que falta para resolver o NameError
 
+# ... (seu código de localização do Stockfish aqui)
+
+st.title("♟️ Analisador de Partidas PGN")
+
+uploaded_file = st.file_uploader("Carregue sua partida (.pgn)", type="pgn")
+
+if uploaded_file is not None:
+    pgn_text = uploaded_file.getvalue().decode("utf-8")
+    partida = chess.pgn.read_game(StringIO(pgn_text))
+    
+    if partida:
+        # Dicionário para contar as categorias (como na imagem)
+        resumo = {
+            "Melhor ⭐": 0, "Excelente !": 0, "Bom ✓": 0,
+            "Imprecisão ?!": 0, "Erro ?": 0, "Capivarada ??": 0
+        }
+        
+        tabuleiro = partida.board()
+        lances_analisados = []
+
+        with st.status("O Professor está analisando os lances...") as status:
+            with chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH) as engine:
+                for move in partida.mainline_moves():
+                    # 1. Avalia antes do lance
+                    info_antes = engine.analyse(tabuleiro, chess.engine.Limit(time=0.1))
+                    score_antes = info_antes["score"].relative.score(mate_score=10000)
+
+                    # 2. Faz o lance
+                    tabuleiro.push(move)
+
+                    # 3. Avalia depois do lance
+                    info_depois = engine.analyse(tabuleiro, chess.engine.Limit(time=0.1))
+                    score_depois = info_depois["score"].relative.score(mate_score=10000)
+
+                    # 4. Calcula perda (ajustando a perspectiva do turno)
+                    perda = (score_antes * -1) - score_depois 
+                    label, cor = classificar_lance(perda)
+                    
+                    resumo[label] += 1
+                    lances_analisados.append({"move": move.uci(), "label": label, "color": cor})
+            status.update(label="Análise concluída!", state="complete")
+
+        # --- EXIBIÇÃO ESTILO CHESS.COM ---
+        st.subheader("Resumo da Partida")
+        
+        # Colunas de métricas coloridas
+        cols = st.columns(len(resumo))
+        for i, (label, count) in enumerate(resumo.items()):
+            cor_hex = classificar_lance(1000 if "Capivarada" in label else 0)[1] # Busca cor simplificada
+            cols[i].markdown(f"<div style='text-align:center; background-color:{cor_hex}; border-radius:5px; padding:10px; color:white;'><b>{count}</b><br><small>{label}</small></div>", unsafe_allow_html=True)
+
+        st.divider()
+
+        # Lista de lances com cores
+        st.write("### Histórico de Análise")
+        for i, analise in enumerate(lances_analisados):
+            st.markdown(f"Lance {i+1}: **{analise['move']}** → <span style='color:{analise['color']}'>{analise['label']}</span>", unsafe_allow_html=True)
+
 # --- CONFIGURAÇÕES DO MOTOR (REVISADO PARA CLOUD) ---
 def buscar_estoque_peixe():
     # 1. Tenta localizar no PATH do sistema (onde o packages.txt instala)
