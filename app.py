@@ -7,7 +7,13 @@ import altair as alt
 import shutil
 import os
 from io import StringIO
-from streamlit_chess import st_chess # Componente para o tabuleiro interativo
+
+# Tente importar o componente; se falhar, mostre uma mensagem amigável
+try:
+    from streamlit_chess import st_chess
+except ModuleNotFoundError:
+    st.error("Erro: A biblioteca 'streamlit-chess' não foi instalada. Verifique seu requirements.txt.")
+    st.stop()
 
 # --- 1. CONFIGURAÇÃO E DESIGN ---
 st.set_page_config(page_title="Chess Review Pro", layout="wide")
