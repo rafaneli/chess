@@ -1,35 +1,56 @@
 import streamlit as st
 import chess
 import chess.engine
-import chess.pgn
 import os
 import shutil
-from io import StringIO
 
-# --- CONFIGURAÇÕES DO MOTOR ---
-# Certifique-se de que o binário do Stockfish esteja na mesma pasta ou forneça o caminho
-STOCKFISH_PATH = shutil.which("stockfish")  # Verifica se está no PATH (cloud)
-if not STOCKFISH_PATH:
-    # Fallback para caminhos locais
-    STOCKFISH_PATHS = [
-        os.path.join("stockfish", "stockfish"),  # Para local
-        os.path.join("stockfish", "stockfish.exe"),  # Para Windows local
+# --- CONFIGURAÇÕES DO MOTOR (REVISADO PARA CLOUD) ---
+def buscar_estoque_peixe():
+    # 1. Tenta localizar no PATH do sistema (onde o packages.txt instala)
+    path = shutil.which("stockfish")
+    if path:
+        return path
+    
+    # 2. Caminhos padrão do Linux (Debian/Ubuntu no Streamlit)
+    caminhos_linux = [
+        "/usr/games/stockfish",
+        "/usr/bin/stockfish",
+        "/usr/local/bin/stockfish"
     ]
-    for path in STOCKFISH_PATHS:
-        if os.path.exists(path):
-            STOCKFISH_PATH = path
-            break
+    for p in caminhos_linux:
+        if os.path.exists(p):
+            return p
+            
+    # 3. Fallback para Windows Local
+    if os.path.exists("stockfish.exe"):
+        return "stockfish.exe"
+        
+    return None
+
+STOCKFISH_PATH = buscar_estoque_peixe()
 
 class ChessTutor:
     def __init__(self):
+        self.engine = None
+        if not STOCKFISH_PATH:
+            st.error("Erro crítico: O executável do Stockfish não foi encontrado no servidor.")
+            return
+
         try:
+            # No Linux, popen_uci precisa do caminho absoluto ou nome correto
             self.engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
-        except Exception:
-            st.error("Erro: Executável do Stockfish não encontrado.")
-            self.engine = None
+        except Exception as e:
+            st.error(f"Erro ao iniciar o motor: {e}")
 
     def get_analysis(self, board):
-        if not self.engine: return None
+        if not self.engine: 
+            return None
+        try:
+            # Limitamos o tempo para não travar o servidor gratuito
+            info = self.engine.analyse(board, chess.engine.Limit(time=0.1))
+            return info["score"].relative.score(mate_score=10000)
+        except:
+            return None
         # Analisa a melhor jogada
         info = self.engine.analyse(board, chess.engine.Limit(time=0.1))
         return info["score"].relative.score(mate_score=10000)
