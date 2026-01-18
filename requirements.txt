@@ -1,5 +1,5 @@
 streamlit>=1.30.0
-python-chess
-st-chess-board
+python-chess==1.999
+streamlit-elements==0.1.0
 pandas
 altair
