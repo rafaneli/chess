@@ -3,6 +3,7 @@ import chess
 import chess.engine
 import os
 import shutil
+from io import StringIO  # <--- Linha que falta para resolver o NameError
 
 # --- CONFIGURAÇÕES DO MOTOR (REVISADO PARA CLOUD) ---
 def buscar_estoque_peixe():
