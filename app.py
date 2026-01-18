@@ -1,16 +1,18 @@
 import streamlit as st
 import chess
+import chess.svg
 import chess.engine
 import pandas as pd
 import sqlite3
 import hashlib
 import shutil
 import os
+import random
+import base64
 from io import StringIO
-import streamlit.components.v1 as components
 
 # --- 1. CONFIGURAÇÃO E BANCO DE DADOS ---
-st.set_page_config(page_title="Chess Pro Platform", layout="wide")
+st.set_page_config(page_title="Chess Master Pro", layout="wide")
 
 def init_db():
     conn = sqlite3.connect('chess_master.db')
@@ -26,9 +28,9 @@ def get_engine():
     path = shutil.which("stockfish") or "/usr/games/stockfish"
     return chess.engine.SimpleEngine.popen_uci(path) if os.path.exists(path) else None
 
-# --- 2. SISTEMA DE LOGIN/CADASTRO ---
+# --- 2. SISTEMA DE LOGIN / CADASTRO ---
 if 'user' not in st.session_state:
-    st.title("♟️ Chess Master Pro")
+    st.title("♟️ Chess Master Platform")
     t1, t2 = st.tabs(["Login", "Cadastro"])
     with t1:
         u = st.text_input("Usuário", key="login_u")
@@ -47,101 +49,107 @@ if 'user' not in st.session_state:
                 conn = sqlite3.connect('chess_master.db')
                 conn.execute('INSERT INTO users VALUES (?,?,800)', (nu, hashlib.sha256(np.encode()).hexdigest()))
                 conn.commit()
-                st.success("Cadastrado! Use a aba Login.")
-            except: st.error("Erro no cadastro.")
+                st.success("Cadastrado com sucesso!")
+            except: st.error("Usuário já existe.")
     st.stop()
 
-# --- 3. COMPONENTE DE TABULEIRO INTERATIVO (JS) ---
-def jogavel_board(fen, key):
-    # Tabuleiro interativo que retorna o lance para o Streamlit
-    board = chess.Board(fen)
-    legal_moves = [move.uci() for move in board.legal_moves]
-    
-    # HTML/JS para o tabuleiro interativo
-    board_html = f"""
-    <div id="board_{key}" style="width: 400px; height: 400px; background: #312e2b; border: 2px solid #555;">
-        <p style="color: white; text-align: center; padding-top: 150px;">
-            Clique para interagir (Simulação de Tabuleiro Ativa)<br>
-            FEN: {fen}
-        </p>
-    </div>
-    <script>
-        // Aqui o componente se comunica com o Python enviando o lance escolhido
-        const move = window.prompt("Digite o lance (ex: e2e4, e7e5):");
-        if (move) window.parent.postMessage({{type: 'streamlit:setComponentValue', value: move}}, '*');
-    </script>
-    """
-    # Para manter o tabuleiro real e jogável sem quebrar o Streamlit:
-    st.write(f"Vez de: **{'Brancas' if board.turn else 'Pretas'}**")
-    import chess.svg
-    board_svg = chess.svg.board(board=board, size=400)
-    st.image(f"data:image/svg+xml;base64,{hashlib.md5(board_svg.encode()).hexdigest()}") # Representação visual
-    
-    res = st.text_input("Mova sua peça (Notação UCI, ex: e2e4):", key=f"input_{key}")
-    return res
+# --- 3. GERADOR DE EXERCÍCIOS "INFINITOS" ---
+# Base de dados de sementes (FENs iniciais) para o gerador
+FEN_SEEDS = {
+    "Aberturas": [
+        "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
+        "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1",
+        "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1"
+    ],
+    "Táticas": [
+        "6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1",
+        "r1bqkbnr/p1pp1ppp/1pn5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4",
+        "3r2k1/1p3ppp/8/8/8/8/1P3PPP/3R2K1 w - - 0 1"
+    ],
+    "Finais": [
+        "8/8/8/8/8/4k3/8/R3K3 w - - 0 1",
+        "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
+        "8/8/k7/8/8/8/1R6/1K6 w - - 0 1"
+    ],
+    "Aproveite o Erro": [
+        "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
+        "r1bqkb1r/pppp1ppp/2n2n2/4p3/4P3/3P1N2/PPP2PPP/RNBQKB1R w KQkq - 1 4"
+    ]
+}
 
-# --- 4. MENU E FUNCIONALIDADES ---
+def carregar_novo_desafio(tema):
+    # Seleciona uma semente aleatória e define como o desafio atual
+    st.session_state.fen_desafio = random.choice(FEN_SEEDS[tema])
+    st.session_state.solucao_desafio = None
+
+# --- 4. INTERFACE ---
 st.sidebar.title(f"👤 {st.session_state.user} ({st.session_state.rating})")
-menu = st.sidebar.selectbox("Menu", ["Jogar", "Aprendizado", "Análise"])
+menu = st.sidebar.selectbox("Menu", ["Jogar Partida", "Aprendizado IA", "Histórico"])
 
-# --- ABA JOGAR ---
-if menu == "Jogar":
-    st.header("🎮 Partida Local")
-    if 'fen' not in st.session_state: st.session_state.fen = chess.STARTING_FEN
+if menu == "Aprendizado IA":
+    st.header("🎓 Centro de Treinamento Infinito")
     
-    col_ev, col_bd, col_ctrl = st.columns([0.2, 2, 1])
+    tema = st.radio("Escolha o Tema:", list(FEN_SEEDS.keys()), horizontal=True)
     
-    with col_bd:
-        move = st.text_input("Seu Lance (ex: e2e4, Nf3):", key="play_move")
-        if st.button("Confirmar Lance"):
-            board = chess.Board(st.session_state.fen)
-            try:
-                board.push_san(move)
-                st.session_state.fen = board.fen()
-                st.rerun()
-            except: st.error("Lance ilegal.")
-        
-        import chess.svg
-        st.image(chess.svg.board(board=chess.Board(st.session_state.fen), size=450), use_column_width=False)
+    # Inicializa o desafio se não existir ou se o tema mudou
+    if 'fen_desafio' not in st.session_state or st.sidebar.button("🔄 Resetar Sessão"):
+        carregar_novo_desafio(tema)
 
-# --- ABA APRENDIZADO (COM TROCA DE EXERCÍCIOS) ---
-elif menu == "Aprendizado":
-    st.header("🎓 Centro de Treinamento")
-    
-    temas = {
-        "Aberturas": ["r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3", "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1"],
-        "Táticas": ["6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1", "r1bqkbnr/p1pp1ppp/1pn5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4"],
-        "Finais": ["8/8/8/8/8/4k3/8/R3K3 w - - 0 1", "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1"]
-    }
-    
-    tema_escolhido = st.radio("Escolha o Tema:", list(temas.keys()), horizontal=True)
-    
-    # Sistema para trocar exercícios dentro do tema
-    if f"idx_{tema_escolhido}" not in st.session_state:
-        st.session_state[f"idx_{tema_escolhido}"] = 0
-    
-    idx = st.session_state[f"idx_{tema_escolhido}"]
-    fen_atual = temas[tema_escolhido][idx]
-    
     col_board, col_info = st.columns([2, 1])
-    
+
     with col_board:
-        import chess.svg
-        st.image(chess.svg.board(board=chess.Board(fen_atual), size=400))
+        board = chess.Board(st.session_state.fen_desafio)
+        board_svg = chess.svg.board(board=board, size=450).encode("utf-8")
+        st.image(f"data:image/svg+xml;base64,{base64.b64encode(board_svg).decode('utf-8')}", use_column_width=False)
         
         if st.button("Próximo Exercício ➡️"):
-            st.session_state[f"idx_{tema_escolhido}"] = (idx + 1) % len(temas[tema_escolhido])
+            carregar_novo_desafio(tema)
             st.rerun()
 
     with col_info:
-        st.info("Resolva a posição ou use a IA.")
-        if st.button("Dica do Stockfish"):
+        st.markdown(f"### Desafio: {tema}")
+        st.write("Analise a posição no tabuleiro. O que você faria?")
+        
+        if st.button("🔍 Revelar Solução da IA"):
             engine = get_engine()
             if engine:
-                board = chess.Board(fen_atual)
-                res = engine.analyse(board, chess.engine.Limit(time=1.0))
-                st.success(f"Melhor lance: **{board.san(res['pv'][0])}**")
+                with st.spinner("O Professor está calculando..."):
+                    result = engine.analyse(board, chess.engine.Limit(time=1.0))
+                    best_move = board.san(result["pv"][0])
+                    st.session_state.solucao_desafio = best_move
+                    st.success(f"O melhor lance nesta posição é: **{best_move}**")
                 engine.quit()
+            else:
+                st.error("Motor Stockfish indisponível.")
+
+elif menu == "Jogar Partida":
+    st.header("🎮 Jogo Local")
+    if 'game_fen' not in st.session_state: st.session_state.game_fen = chess.STARTING_FEN
+    
+    board = chess.Board(st.session_state.game_fen)
+    col_b, col_c = st.columns([2, 1])
+    
+    with col_b:
+        board_svg = chess.svg.board(board=board, size=500).encode("utf-8")
+        st.image(f"data:image/svg+xml;base64,{base64.b64encode(board_svg).decode('utf-8')}")
+    
+    with col_c:
+        move = st.text_input("Seu Lance (ex: e4, Nf3):")
+        if st.button("Confirmar"):
+            try:
+                board.push_san(move)
+                st.session_state.game_fen = board.fen()
+                st.rerun()
+            except: st.error("Lance ilegal.")
+        
+        if st.button("Finalizar Partida"):
+            conn = sqlite3.connect('chess_master.db')
+            conn.execute('INSERT INTO games (white, black, pgn, result) VALUES (?,?,?,?)', 
+                         (st.session_state.user, "Oponente", board.fen(), "1-0"))
+            conn.execute('UPDATE users SET rating = rating + 10 WHERE username=?', (st.session_state.user,))
+            conn.commit()
+            st.session_state.rating += 10
+            st.success("Rating Atualizado!")
 
 if st.sidebar.button("Log Out"):
     st.session_state.clear()
