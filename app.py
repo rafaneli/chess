@@ -65,4 +65,40 @@ if uploaded_file is not None:
                     info_antes = engine.analyse(board, chess.engine.Limit(time=0.1))
                     score_antes = info_antes["score"].relative.score(mate_score=10000)
 
-                    board.push(move
+                    board.push(move)
+
+                    # Avaliação depois do lance
+                    info_depois = engine.analyse(board, chess.engine.Limit(time=0.1))
+                    score_depois = info_depois["score"].relative.score(mate_score=10000)
+
+                    # Perda de centipawns (ajustando para a vez do jogador)
+                    perda = (score_antes * -1) - score_depois
+                    label, cor = classificar_lance(perda)
+                    
+                    resumo[label] += 1
+                    lances_detalhados.append({"san": move.uci(), "label": label, "color": cor})
+            status.update(label="Análise finalizada!", state="complete")
+
+        # --- EXIBIÇÃO DO RESUMO (CATEGORIAS) ---
+        st.write("### Revisão da Partida")
+        cols = st.columns(len(resumo))
+        for i, (label, count) in enumerate(resumo.items()):
+            # Busca a cor da categoria para o fundo do card
+            _, bg_color = classificar_lance(0 if "Melhor" in label else (200 if "Erro" in label else 400))
+            if "Imprecisão" in label: bg_color = "#f0c15c"
+            
+            cols[i].markdown(
+                f"""<div style="background-color:{bg_color}; padding:15px; border-radius:10px; text-align:center; color:white;">
+                    <h2 style="margin:0;">{count}</h2>
+                    <small>{label}</small>
+                </div>""", 
+                unsafe_allow_html=True
+            )
+
+        # --- LISTA DE LANCES ---
+        with st.expander("Ver análise detalhada lance a lance"):
+            for i, item in enumerate(lances_detalhados):
+                st.markdown(f"**{i+1}. {item['san']}** — <span style='color:{item['color']}'>{item['label']}</span>", unsafe_allow_html=True)
+    
+    elif not STOCKFISH_PATH:
+        st.error("Motor Stockfish não configurado corretamente no servidor.")
